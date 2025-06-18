@@ -1,8 +1,5 @@
 from google.adk.agents import Agent
 from pydantic import BaseModel, Field
-from typing import List, Union
-
-from pydantic import BaseModel, Field
 from typing import List
 
 class GeometryComponent(BaseModel):
@@ -22,7 +19,7 @@ class ComponentGeometryOutput(BaseModel):
 
 component_geometry_agent = Agent(
     name="ComponentGeometryAgent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-pro",
     description="Extracts geometric data of structural components and computes physical quantities such as volume or area using engineering formulas.",
     instruction="""
 You will receive a PDF of a bridge General Arrangement Drawing (GAD).

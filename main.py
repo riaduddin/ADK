@@ -106,10 +106,10 @@ async def upload_file(
     Mimics the ADK Web UI behavior.
     """
     # 1. Save the file locally
-    print("upload file")
+    print(f"Received file: {file.filename} (size: {file.size} bytes)")
     upload_dir = "uploaded_files"
     os.makedirs(upload_dir, exist_ok=True)
-
+    print(f"Upload directory: {upload_dir}")
     unique_name = f"{uuid.uuid4()}_{file.filename}"
     file_path = os.path.join(upload_dir, unique_name)
 
@@ -127,50 +127,81 @@ async def upload_file(
 
     # 3. Send the “[FILE] /path/to/file.pdf” message
     response_texts = []
-    structured_outputs = []
+    merged_output = {}
+    boq_data=None
+    validation_result=None
     try:
         for event in app_instance.stream_query(
             user_id=user_id,
             session_id=session.id,
             message=f"[FILE] {file_path}",
-            ):
-            print("Raw event:", event)
-
+        ):
             try:
                 part_text = event["content"]["parts"][0]["text"]
 
-                # Clean ```json ... ``` wrapper
                 if part_text.startswith("```json"):
                     part_text = part_text.replace("```json", "").strip()
                 if part_text.endswith("```"):
                     part_text = part_text[:-3].strip()
 
                 print("✅ Cleaned JSON text:", part_text)
-                # yield part_text + "\n\n"
 
-                # Stop if validation is in the response
-                if "validation" in part_text.lower():
-                    print("🔁 Found 'validation' — stopping stream")
-                    break
+                # if "validation" in part_text.lower():
+                #     print("🔁 Found 'validation' — stopping stream")
+                #     break
+
                 response_texts.append(part_text)
 
                 try:
                     parsed = json.loads(part_text)
-                    structured_outputs.append(parsed)
-                    print("✅ Parsed dict:", parsed)
+                    
+                    if "boq" in parsed:
+                        boq_data = parsed["boq"]
+                        print("📦 Captured BoQ data")
+                        
+                    if "validation" in parsed:
+                        validation_result = parsed
+                        print("🧪 Captured validation result:", validation_result)
+
+                        # ✅ If validation is 'pass', add BoQ and exit loop early
+                        if validation_result.get("validation") == "pass" and boq_data:
+                            merged_output["boq"] = boq_data
+                            print("✅ BoQ passed validation — exiting stream early.")
+                            break
+                        continue
+
+                    # Merge top-level keys without extracting nested parts
+                    if isinstance(parsed, list):
+                        for item in parsed:
+                            if isinstance(item, dict):
+                                merged_output.update(item)
+                    elif isinstance(parsed, dict):
+                        merged_output.update(parsed)
+                        
+                    print("✅ Parsed JSON successfully:", merged_output)
+
                 except json.JSONDecodeError as err:
                     print("❌ Failed to parse JSON:", err)
 
             except (KeyError, IndexError, TypeError) as e:
                 print("❌ Could not extract text from event:", e)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent processing failed: {e}")
 
+    finally:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"🧹 Deleted temporary file: {file_path}")
+        except Exception as cleanup_err:
+            print(f"⚠️ Failed to delete temp file: {cleanup_err}")
+            
     return {
         "status": "success",
         "file_saved_as": unique_name,
         "session_id": session.id,
-        "response": response_texts,
+        "structured_outputs": merged_output
     }
 
 

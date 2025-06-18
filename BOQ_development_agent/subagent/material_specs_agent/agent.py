@@ -1,9 +1,22 @@
 from google.adk.agents import Agent
+from pydantic import BaseModel, Field
+from typing import List
+
+
+class MaterialSpec(BaseModel):
+    component: str = Field(description="Name of the component where the material is used (e.g., Crash Barrier, Deck Slab)")
+    material_type: str = Field(description="Type of material (e.g., Concrete, Steel, Elastomeric Bearing)")
+    grade: str = Field(description="Grade of material (e.g., M40, Fe 500D, or 'N/A')")
+    specifications: List[str] = Field(description="Relevant codes or standards (e.g., IS 456, IRC 83)")
+    application: str = Field(description="Where and how the material is used (e.g., Used for deck slab in seismic zones)")
+
+class MaterialSpecsOutput(BaseModel):
+    material_specs: List[MaterialSpec]
 
 
 material_specs_agent = Agent(
     name="MaterialSpecsAgent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-pro",
     description="Extracts and organizes material specifications from bridge design PDFs, including concrete grades, steel types, and finishing materials.",
     instruction="""
 You will receive a bridge design document (usually a GAD or structural specification PDF).
@@ -21,8 +34,9 @@ For each material, identify:
 - Specification/grade
 - Application notes (e.g., used for superstructure, seismic zone, etc.)
 
-Format:
-```json
+Return only valid **JSON**, no extra text.
+
+Example format:
 {
   "material_specs": [
     {
@@ -41,7 +55,9 @@ Format:
     }
   ]
 }
-Use technical accuracy. If any detail is assumed, clearly annotate. Unknown values should be returned as "N/A".
+
+Use technical accuracy. If any value is unknown, use "N/A". If assumed, annotate in the application field.
 """,
-    output_key="material_specifications"
-    )
+    output_schema=MaterialSpecsOutput,
+    output_key="material_specs"
+)

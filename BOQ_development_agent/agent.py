@@ -7,71 +7,85 @@ from .subagent.pile_details_agent.agent import pile_details_agent
 from .subagent.structural_notes_agent.agent import structural_notes_agent
 from .subagent.compliance_parameters_agent.agent import compliance_parameters_agent
 from google.adk.agents import Agent
+from pydantic import BaseModel, Field
+from typing import List
+
+class BoQItem(BaseModel):
+    component: str = Field(description="Name or type of the structural component (e.g., Pier P1, Deck Slab)")
+    material: str = Field(description="Material description (e.g., Concrete M35, Fe500D TMT Bars)")
+    quantity: str = Field(description="Measured quantity with units (e.g., 850 kg, 18.2 m³)")
+    specification: str = Field(description="Applicable codes, reinforcement spacing, or other notes")
+    category: str = Field(description="BoQ category (e.g., Substructure, Reinforcement, Superstructure)")
+
+
+class BoQOutput(BaseModel):
+    boq: List[BoQItem]
+
 
 boq_generation_agent = Agent(
     name="BoqGenerationAgent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-pro",
     description="Generates a structured Bill of Quantities (BoQ) using outputs from multiple agents, including geometry, reinforcement, material specs, and compliance codes.",
     instruction="""
-    You will receive JSON inputs from seven structured extraction agents:
-    - component_geometry
-    - pile_details
-    - reinforcement_details
-    - material_specs
-    - seismic_arrestors
-    - structural_notes
-    - compliance_parameters
+You will receive JSON inputs from seven structured extraction agents:
+- component_geometry
+- pile_details
+- reinforcement_details
+- material_specs
+- seismic_arrestors
+- structural_notes
+- compliance_parameters
 
-    Each agent returns structured data about different aspects of a bridge construction project extracted from a PDF. Your task is to intelligently combine and transform these inputs into a unified and organized Bill of Quantities (BoQ).
+Each agent returns structured data about different aspects of a bridge construction project extracted from a PDF. Your task is to intelligently combine and transform these inputs into a unified and organized Bill of Quantities (BoQ).
 
-    For each relevant item, output:
-    - `component`: Name/type of the element (e.g., Pier P1, Deck Slab)
-    - `material`: Material used (e.g., Concrete M35, Fe500D TMT Bars)
-    - `quantity`: Value + unit (e.g., 850 kg, 18.2 m³)
-    - `specification`: Related codes/specs (e.g., IS 456, bar spacing, concrete cover)
-    - `category`: Logical grouping (e.g., Superstructure, Substructure, Reinforcement)
+For each relevant item, output:
+- `component`: Name/type of the element (e.g., Pier P1, Deck Slab)
+- `material`: Material used (e.g., Concrete M35, Fe500D TMT Bars)
+- `quantity`: Value + unit (e.g., 850 kg, 18.2 m³)
+- `specification`: Related codes/specs (e.g., IS 456, bar spacing, concrete cover)
+- `category`: Logical grouping (e.g., Superstructure, Substructure, Reinforcement)
 
-    Use the following logic:
-    - Use data from `component_geometry`, `pile_details`, and `reinforcement_details` to identify measurable quantities.
-    - Use `material_specs` and `compliance_parameters` to extract and cross-check material grades and applicable codes.
-    - Use `structural_notes` to support assumptions, load considerations, or categorization.
-    - Use `seismic_arrestors` where they appear as physical or regulatory components.
-    - Group items logically and keep similar categories together.
+Use the following logic:
+- Use data from `component_geometry`, `pile_details`, and `reinforcement_details` to identify measurable quantities.
+- Use `material_specs` and `compliance_parameters` to extract and cross-check material grades and applicable codes.
+- Use `structural_notes` to support assumptions, load considerations, or categorization.
+- Use `seismic_arrestors` where they appear as physical or regulatory components.
+- Group items logically and keep similar categories together.
 
-    Return the BoQ in this format:
-
+Return the BoQ in this format:
+{
+  "boq": [
     {
-    "boq": [
-        {
-        "component": "Pier P1",
-        "material": "Concrete M35",
-        "quantity": "18.2 m³",
-        "specification": "IS 456, 50mm cover",
-        "category": "Substructure"
-        },
-        {
-        "component": "Deck Slab",
-        "material": "Fe500D TMT Bars",
-        "quantity": "850 kg",
-        "specification": "Top 4T16 @150mm, Bottom 2T12 @200mm",
-        "category": "Reinforcement"
-        }
-    ]
+      "component": "Pier P1",
+      "material": "Concrete M35",
+      "quantity": "18.2 m³",
+      "specification": "IS 456, 50mm cover",
+      "category": "Substructure"
+    },
+    {
+      "component": "Deck Slab",
+      "material": "Fe500D TMT Bars",
+      "quantity": "850 kg",
+      "specification": "Top 4T16 @150mm, Bottom 2T12 @200mm",
+      "category": "Reinforcement"
     }
+  ]
+}
 
-    Notes:
-    - Omit empty or irrelevant entries.
-    - If a field is unavailable, mark its value as `"incomplete"`.
-    - Ensure units are consistent (e.g., kg, m³, m²).
-    - Prepare this BoQ as if it will be directly exported to PDF.
-    """,
-    output_key="boq",  
-    )
+Notes:
+- Omit empty or irrelevant entries.
+- If a field is unavailable, mark its value as "incomplete".
+- Ensure units are consistent (e.g., kg, m³, m²).
+- Prepare this BoQ as if it will be directly exported to PDF.
+""",
+    output_schema=BoQOutput,
+    output_key="boq"
+)
 
 
 boq_validation_agent = Agent(
     name="BoqValidationAgent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-pro",
     description="Validates the generated Bill of Quantities (BoQ) by checking completeness, consistency, unit accuracy, and code compliance.",
     instruction="""
     You will receive a structured Bill of Quantities (BoQ) JSON that was generated from seven extraction agents.

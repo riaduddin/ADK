@@ -1,9 +1,26 @@
 from google.adk.agents import Agent
+from pydantic import BaseModel, Field
+from typing import List
+
+
+class SeismicArrestorItem(BaseModel):
+    component: str = Field(description="Component name (e.g., Transverse Seismic Stopper)")
+    material: str = Field(description="Material type (e.g., Fe 410 Steel, Elastomeric)")
+    quantity: str = Field(description="Number of units or 'N/A'")
+    seismic_zone: str = Field(description="Seismic zone (e.g., Zone III) or 'N/A'")
+    wind_zone: str = Field(description="Wind zone (e.g., Wind Zone V) or 'N/A'")
+    design_codes: str = Field(description="Comma-separated list of relevant codes (e.g., IRC 6, IS 1893) or 'N/A'")
+    location: str = Field(description="Application location (e.g., between Pier and Superstructure) or 'N/A'")
+
+
+class SeismicArrestorsOutput(BaseModel):
+    seismic_arrestors: List[SeismicArrestorItem]
+
 
 seismic_arrestors_agent = Agent(
     name="SeismicArrestorsAgent",
     model="gemini-2.5-pro",
-   description="Extracts seismic protection and restraint component details from bridge designs, including stopper types, placement, quantities, and relevant seismic compliance references.",
+    description="Extracts seismic protection and restraint component details from bridge designs, including stopper types, placement, quantities, and relevant seismic compliance references.",
     instruction="""
 You will receive a bridge design PDF. Your task is to extract all seismic restraint components and related specifications, including seismic and wind zone compliance.
 
@@ -23,24 +40,23 @@ Extract the following fields:
 - Design code reference (e.g., IRC 6, IRC 83, IS 1893)
 - Application location (e.g., between Pier P1 and Superstructure)
 
-If design drawings include diagrams, use shape or label annotations to infer placement or function.
-
-Return in this format:
-```json
+Return in valid JSON only. Use this format:
 {
   "seismic_arrestors": [
     {
       "component": "Transverse Seismic Stopper",
       "material": "Fe 410 Steel",
-      "quantity": 4,
+      "quantity": "4",
       "seismic_zone": "Zone III",
       "wind_zone": "Zone V",
-      "design_codes": ["IRC 6", "IRC 83 (Part-III)-2018"],
+      "design_codes": "IRC 6, IRC 83 (Part-III)-2018",
       "location": "Between Pier P2 and deck"
     }
   ]
 }
-If information is not explicitly available, use "N/A" and note assumptions where necessary.
+
+Use "N/A" where information is missing. If assumptions are made (e.g., inferred from drawing), briefly reflect that in the value.
 """,
+    output_schema=SeismicArrestorsOutput,
     output_key="seismic_arrestors"
-    )
+)
