@@ -8,12 +8,21 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from fastapi import BackgroundTasks
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 import vertexai
 from vertexai.preview import reasoning_engines
 from BOQ_development_agent.agent import root_agent
 
 from pymongo import MongoClient
+
+REQUIRED_COMPONENTS = [
+    "component_geometry", "pile_details", "reinforcement_details",
+    "material_specs", "seismic_arrestors", "structural_notes",
+    "compliance_parameters"
+]
+
+
 
 # from storing_data import get_component_from_db, store_component_in_db
 
@@ -59,15 +68,22 @@ def get_component_from_db(collection_name, user_id, session_id):
     collection = db[collection_name]
     result = collection.find_one({"user_id": user_id, "session_id": session_id})
     if result:
-        return result.get("data", {})
+        return {
+            "status": "completed",
+            "data": result.get("data", {})
+        }
     else:
-        raise HTTPException(status_code=404, detail=f"{collection_name} not found for given user and session.")
+        return {
+            "status": "pending",
+            "data": []
+        }
     
-    
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def process_file_in_background(user_id: str, session_id: str, file_path: str):
-    from storing_data import store_component_in_db
-    import json
-    import os
+    # from storing_data import store_component_in_db
+    # import json
+    # import os
+    parsed_components = {}
 
     boq_data = None
     validation_result = None
@@ -110,19 +126,25 @@ def process_file_in_background(user_id: str, session_id: str, file_path: str):
                         store_component_in_db("boq", boq_data, user_id, session_id)
                         break
                     continue
-                for key in [
-                    "component_geometry", "pile_details", "reinforcement_details",
-                    "material_specs", "seismic_arrestors", "structural_notes", 
-                    "compliance_parameters"
-                ]:
-                    if key in parsed:
+                for key in REQUIRED_COMPONENTS:
+                    if key in parsed and key not in parsed_components:
                         store_component_in_db(key, parsed[key], user_id, session_id)
+                        parsed_components[key] = parsed[key]
+                        print(f"✅ Stored component: {key}")      
 
             except Exception as e:
                 print(f"❌ Stream event processing failed: {e}")
 
     except Exception as e:
-        print(f"❌ Background processing failed: {e}")
+        print(f"⛔ Final failure after retries: {e}")
+        # ROLLBACK by manually deleting all previously stored docs for session
+        for key in REQUIRED_COMPONENTS:
+            deleted = db[key].delete_many({
+                "user_id": user_id,
+                "session_id": session_id
+            })
+            if deleted.deleted_count > 0:
+                print(f"🗑️ Rolled back {deleted.deleted_count} docs in {key}")
 
     finally:
         try:
