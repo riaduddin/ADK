@@ -19,7 +19,7 @@ from pymongo import MongoClient
 REQUIRED_COMPONENTS = [
     "component_geometry", "pile_details", "reinforcement_details",
     "material_specs", "seismic_arrestors", "structural_notes",
-    "compliance_parameters"
+    "compliance_parameters", "boq"
 ]
 
 
@@ -45,31 +45,34 @@ MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 client = MongoClient(MONGODB_URI)
 db = client["engineering_components"]
 
-def store_component_in_db(collection_name, component_data, user_id, session_id):
+def store_component_in_db(collection_name, component_data, user_id, session_id,status):
     collection = db[collection_name]
-    if component_data:
-        doc = {
-            "user_id": user_id,
-            "session_id": session_id,
-            "data": component_data,
-            "status": "completed"
-        }
-    else:
-        doc = {
-            "user_id": user_id,
-            "session_id": session_id,
-            "data": component_data,
-            "status": "failed"
-        }
+
+    # Determine status
+    # if component_data:
+    #     status = "completed"
+    # else:
+    #     # Check if document already exists → skip insert if already inserted as "pending"
+    #     if collection.find_one({"user_id": user_id, "session_id": session_id}):
+    #         return  # Avoid duplicate
+    #     status = "pending"
+
+    doc = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "data": component_data,
+        "status": status
+    }
+
     result = collection.insert_one(doc)
-    print(f"📥 Stored in '{collection_name}' with _id: {result.inserted_id}")
+    print(f"📥 Stored in '{collection_name}' with _id: {result.inserted_id}, status: {status}")
 
 def get_component_from_db(collection_name, user_id, session_id):
     collection = db[collection_name]
     result = collection.find_one({"user_id": user_id, "session_id": session_id})
     if result:
         return {
-            "status": "completed",
+            "status": result.get("status", "unknown"),
             "data": result.get("data", {})
         }
     else:
@@ -78,12 +81,12 @@ def get_component_from_db(collection_name, user_id, session_id):
             "data": []
         }
     
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(60))
 def process_file_in_background(user_id: str, session_id: str, file_path: str):
     # from storing_data import store_component_in_db
     # import json
     # import os
-    parsed_components = {}
+    parsed_components = []
 
     boq_data = None
     validation_result = None
@@ -119,17 +122,19 @@ def process_file_in_background(user_id: str, session_id: str, file_path: str):
                     print("🧪 Captured validation result:", validation_result)
 
                     if validation_result.get("validation") == "pass" and boq_data:
-                        store_component_in_db("boq", boq_data, user_id, session_id)
+                        store_component_in_db("boq", boq_data, user_id, session_id,status="completed")
+                        parsed_components.append("boq")
                         break
                     elif "validation" in parsed and validdation_count ==3:
                         print("❗️ Validation failed after 3 attempts, stopping stream.")
-                        store_component_in_db("boq", boq_data, user_id, session_id)
+                        store_component_in_db("boq", boq_data, user_id, session_id,status="completed")
+                        parsed_components.append("boq")
                         break
                     continue
                 for key in REQUIRED_COMPONENTS:
-                    if key in parsed and key not in parsed_components:
-                        store_component_in_db(key, parsed[key], user_id, session_id)
-                        parsed_components[key] = parsed[key]
+                    if key in parsed and key not in parsed_components and key != "boq":
+                        store_component_in_db(key, parsed[key], user_id, session_id,status="completed")
+                        parsed_components.append(key)
                         print(f"✅ Stored component: {key}")      
 
             except Exception as e:
@@ -139,12 +144,17 @@ def process_file_in_background(user_id: str, session_id: str, file_path: str):
         print(f"⛔ Final failure after retries: {e}")
         # ROLLBACK by manually deleting all previously stored docs for session
         for key in REQUIRED_COMPONENTS:
-            deleted = db[key].delete_many({
-                "user_id": user_id,
-                "session_id": session_id
-            })
-            if deleted.deleted_count > 0:
-                print(f"🗑️ Rolled back {deleted.deleted_count} docs in {key}")
+            if key not in parsed_components:
+                print(f"🗑️ Rolling back {key} for user_id={user_id}, session_id={session_id}")
+                #update the status failed for the component that are not parsed in the database
+                store_component_in_db(key, [], user_id, session_id,status="failed")
+                
+            # deleted = db[key].delete_many({
+            #     "user_id": user_id,
+            #     "session_id": session_id
+            # })
+            # if deleted.deleted_count > 0:
+            #     print(f"🗑️ Rolled back {deleted.deleted_count} docs in {key}")
 
     finally:
         try:
