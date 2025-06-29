@@ -38,11 +38,20 @@ db = client["engineering_components"]
 
 def store_component_in_db(collection_name, component_data, user_id, session_id):
     collection = db[collection_name]
-    doc = {
-        "user_id": user_id,
-        "session_id": session_id,
-        "data": component_data
-    }
+    if component_data:
+        doc = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "data": component_data,
+            "status": "completed"
+        }
+    else:
+        doc = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "data": component_data,
+            "status": "failed"
+        }
     result = collection.insert_one(doc)
     print(f"📥 Stored in '{collection_name}' with _id: {result.inserted_id}")
 
@@ -62,6 +71,7 @@ def process_file_in_background(user_id: str, session_id: str, file_path: str):
 
     boq_data = None
     validation_result = None
+    validdation_count = 0
 
     try:
         app_stream = app_instance.stream_query(
@@ -88,14 +98,18 @@ def process_file_in_background(user_id: str, session_id: str, file_path: str):
                     print("📦 Captured BoQ data")
 
                 if "validation" in parsed:
+                    validdation_count+=1
                     validation_result = parsed
                     print("🧪 Captured validation result:", validation_result)
 
                     if validation_result.get("validation") == "pass" and boq_data:
                         store_component_in_db("boq", boq_data, user_id, session_id)
                         break
+                    elif "validation" in parsed and validdation_count ==3:
+                        print("❗️ Validation failed after 3 attempts, stopping stream.")
+                        store_component_in_db("boq", boq_data, user_id, session_id)
+                        break
                     continue
-
                 for key in [
                     "component_geometry", "pile_details", "reinforcement_details",
                     "material_specs", "seismic_arrestors", "structural_notes", 
@@ -112,8 +126,6 @@ def process_file_in_background(user_id: str, session_id: str, file_path: str):
 
     finally:
         try:
-            if validation_result.get("validation") == "fail" and boq_data:
-                store_component_in_db("boq", parsed["boq"], user_id, session.id)
             if os.path.exists(file_path):
                 os.remove(file_path)
                 print(f"🧹 Deleted temporary file: {file_path}")
